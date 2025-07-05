@@ -3,12 +3,9 @@ package com.simpleqq.common;
 public enum MessageType {
     LOGIN,
     REGISTER,
-    ADD_FRIEND,
-    DELETE_FRIEND,
     TEXT_MESSAGE,
     IMAGE_MESSAGE,
     GROUP_MESSAGE,
-    ONLINE_USERS,
     FRIEND_LIST,
     LOGIN_SUCCESS,
     LOGIN_FAIL,
@@ -31,12 +28,6 @@ public enum MessageType {
     GET_GROUPS,
     GET_PENDING_REQUESTS,
     GET_GROUP_MEMBERS,
-    IMAGE_REQUEST,
-    IMAGE_ACCEPT,
-    IMAGE_REJECT,
-    IMAGE_DATA,
     GROUP_JOIN_SUCCESS,
     GROUP_JOIN_FAIL
 }
-
-

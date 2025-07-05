@@ -7,10 +7,8 @@ import com.simpleqq.common.User;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
-import java.net.Socket; // Import Socket class
+import java.net.Socket;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 public class ClientHandler extends Thread {
     private Socket socket;
@@ -73,18 +71,6 @@ public class ClientHandler extends Thread {
                     case IMAGE_MESSAGE:
                         handleImageMessage(message);
                         break;
-                    case IMAGE_REQUEST:
-                        handleImageRequest(message);
-                        break;
-                    case IMAGE_ACCEPT:
-                        handleImageAccept(message);
-                        break;
-                    case IMAGE_REJECT:
-                        handleImageReject(message);
-                        break;
-                    case IMAGE_DATA:
-                        handleImageData(message);
-                        break;
                     case GROUP_INVITE:
                         handleGroupInvite(message);
                         break;
@@ -120,7 +106,6 @@ public class ClientHandler extends Thread {
                 User user = server.getUserManager().getUserById(userId);
                 if (user != null) {
                     user.setOnline(false);
-                    // 通知所有在线用户更新好友列表（更新在线状态）
                     notifyFriendsStatusChange(userId);
                 }
             }
@@ -151,11 +136,9 @@ public class ClientHandler extends Thread {
             user.setOnline(true);
             sendMessage(new Message(MessageType.LOGIN_SUCCESS, "Server", id, user.getUsername()));
             sendFriendList(id);
-            sendPendingFriendRequests(id); // Send pending friend requests on login
-            sendGroupList(id); // Send group list on login
-            sendPendingRequests(id); // Send all pending requests on login
+            sendGroupList(id);
+            sendPendingRequests(id);
             
-            // 通知所有好友用户上线了
             notifyFriendsStatusChange(id);
         } else {
             sendMessage(new Message(MessageType.LOGIN_FAIL, "Server", id, "Invalid ID or password."));
@@ -179,8 +162,6 @@ public class ClientHandler extends Thread {
         String senderId = message.getSenderId();
         String receiverId = message.getReceiverId();
 
-        System.out.println("Processing friend request from " + senderId + " to " + receiverId);
-
         if (server.getUserManager().sendFriendRequest(senderId, receiverId)) {
             sendMessage(new Message(MessageType.SERVER_MESSAGE, "Server", senderId, "Friend request sent to " + receiverId + "."));
             ClientHandler receiverHandler = server.getOnlineClients().get(receiverId);
@@ -194,19 +175,15 @@ public class ClientHandler extends Thread {
 
     private void handleFriendAccept(Message message) throws IOException {
         String acceptorId = message.getSenderId();
-        String requesterId = message.getReceiverId(); // Original sender of the request
-
-        System.out.println("Processing friend accept from " + acceptorId + " for request from " + requesterId);
+        String requesterId = message.getReceiverId();
 
         if (server.getUserManager().acceptFriendRequest(acceptorId, requesterId)) {
             sendMessage(new Message(MessageType.ADD_FRIEND_SUCCESS, "Server", acceptorId, "You are now friends with " + requesterId + "."));
             ClientHandler requesterHandler = server.getOnlineClients().get(requesterId);
             if (requesterHandler != null) {
                 requesterHandler.sendMessage(new Message(MessageType.FRIEND_ACCEPT, acceptorId, requesterId, acceptorId + " accepted your friend request."));
-                // 立即发送更新的好友列表给请求者
                 requesterHandler.sendFriendList(requesterId);
             }
-            // 立即发送更新的好友列表给接受者
             sendFriendList(acceptorId);
         } else {
             sendMessage(new Message(MessageType.SERVER_MESSAGE, "Server", acceptorId, "Failed to accept friend request from " + requesterId + "."));
@@ -215,7 +192,7 @@ public class ClientHandler extends Thread {
 
     private void handleFriendReject(Message message) throws IOException {
         String rejectorId = message.getSenderId();
-        String requesterId = message.getReceiverId(); // Original sender of the request
+        String requesterId = message.getReceiverId();
 
         if (server.getUserManager().rejectFriendRequest(rejectorId, requesterId)) {
             sendMessage(new Message(MessageType.SERVER_MESSAGE, "Server", rejectorId, "You rejected friend request from " + requesterId + "."));
@@ -232,18 +209,13 @@ public class ClientHandler extends Thread {
         String requesterId = message.getSenderId();
         String targetId = message.getReceiverId();
 
-        System.out.println("Processing delete friend request from " + requesterId + " to delete " + targetId);
-
         if (server.getUserManager().deleteFriend(requesterId, targetId)) {
             sendMessage(new Message(MessageType.DELETE_FRIEND_SUCCESS, "Server", requesterId, "Friend deleted: " + targetId));
-            // 通知被删除方
             ClientHandler targetHandler = server.getOnlineClients().get(targetId);
             if (targetHandler != null) {
                 targetHandler.sendMessage(new Message(MessageType.SERVER_MESSAGE, "Server", targetId, "You are no longer friends with: " + requesterId));
-                // 立即发送更新的好友列表给被删除方
                 targetHandler.sendFriendList(targetId);
             }
-            // 立即发送更新的好友列表给删除方
             sendFriendList(requesterId);
         } else {
             sendMessage(new Message(MessageType.DELETE_FRIEND_FAIL, "Server", requesterId, "Failed to delete friend: " + targetId));
@@ -251,11 +223,7 @@ public class ClientHandler extends Thread {
     }
 
     private void handleTextMessage(Message message) throws IOException {
-        System.out.println("Processing text message from " + message.getSenderId() + " to " + message.getReceiverId());
-        
-        // 检查发送者和接收者是否为好友关系
         if (!server.getUserManager().areFriends(message.getSenderId(), message.getReceiverId())) {
-            System.out.println("Users " + message.getSenderId() + " and " + message.getReceiverId() + " are not friends");
             sendMessage(new Message(MessageType.SERVER_MESSAGE, "Server", message.getSenderId(), "You can only send messages to friends."));
             return;
         }
@@ -263,30 +231,24 @@ public class ClientHandler extends Thread {
         ClientHandler receiverHandler = server.getOnlineClients().get(message.getReceiverId());
         if (receiverHandler != null) {
             receiverHandler.sendMessage(message);
-            System.out.println("Message forwarded to " + message.getReceiverId());
         } else {
-            // 用户不在线，可以考虑离线消息存储
             sendMessage(new Message(MessageType.SERVER_MESSAGE, "Server", message.getSenderId(), "User " + message.getReceiverId() + " is offline."));
         }
-        // 保存聊天记录
         server.saveChatMessage(message);
     }
 
     private void handleGroupMessage(Message message) throws IOException {
         List<String> groupMembers = server.getGroupManager().getGroupMembers(message.getReceiverId());
         if (groupMembers != null) {
-            // 检查发送者是否为群成员
             if (!groupMembers.contains(message.getSenderId())) {
                 sendMessage(new Message(MessageType.SERVER_MESSAGE, "Server", message.getSenderId(), "You are not a member of group " + message.getReceiverId() + "."));
                 return;
             }
             
-            // 只转发给群内其他成员（不包括发送者）
             for (String memberId : groupMembers) {
-                if (!memberId.equals(message.getSenderId())) { // 不发送给自己
+                if (!memberId.equals(message.getSenderId())) {
                     ClientHandler memberHandler = server.getOnlineClients().get(memberId);
                     if (memberHandler != null) {
-                        // 创建新的消息对象，确保消息类型正确
                         Message groupMsg = new Message(MessageType.GROUP_MESSAGE, message.getSenderId(), message.getReceiverId(), message.getContent());
                         groupMsg.setTimestamp(message.getTimestamp());
                         memberHandler.sendMessage(groupMsg);
@@ -296,23 +258,19 @@ public class ClientHandler extends Thread {
         } else {
             sendMessage(new Message(MessageType.SERVER_MESSAGE, "Server", message.getSenderId(), "Group " + message.getReceiverId() + " does not exist."));
         }
-        // 保存聊天记录
         server.saveChatMessage(message);
     }
 
     private void handleImageMessage(Message message) throws IOException {
-        // 判断是群聊还是单聊
         List<String> groupMembers = server.getGroupManager().getGroupMembers(message.getReceiverId());
         if (groupMembers != null) {
-            // 群聊图片消息 - 检查发送者是否为群成员
             if (!groupMembers.contains(message.getSenderId())) {
                 sendMessage(new Message(MessageType.SERVER_MESSAGE, "Server", message.getSenderId(), "You are not a member of group " + message.getReceiverId() + "."));
                 return;
             }
             
-            // 转发给所有其他成员
             for (String memberId : groupMembers) {
-                if (!memberId.equals(message.getSenderId())) { // 不发送给自己
+                if (!memberId.equals(message.getSenderId())) {
                     ClientHandler memberHandler = server.getOnlineClients().get(memberId);
                     if (memberHandler != null) {
                         memberHandler.sendMessage(message);
@@ -320,13 +278,11 @@ public class ClientHandler extends Thread {
                 }
             }
         } else {
-            // 单聊图片消息 - 检查是否为好友关系
             if (!server.getUserManager().areFriends(message.getSenderId(), message.getReceiverId())) {
                 sendMessage(new Message(MessageType.SERVER_MESSAGE, "Server", message.getSenderId(), "You can only send images to friends."));
                 return;
             }
             
-            // 直接转发给接收者
             ClientHandler receiverHandler = server.getOnlineClients().get(message.getReceiverId());
             if (receiverHandler != null) {
                 receiverHandler.sendMessage(message);
@@ -334,57 +290,10 @@ public class ClientHandler extends Thread {
                 sendMessage(new Message(MessageType.SERVER_MESSAGE, "Server", message.getSenderId(), "User " + message.getReceiverId() + " is offline."));
             }
         }
-        // 保存聊天记录 - 只保存文件名
         String content = message.getContent();
         String fileName = content.contains(":") ? content.split(":", 2)[0] : content;
         Message historyMessage = new Message(MessageType.IMAGE_MESSAGE, message.getSenderId(), message.getReceiverId(), fileName);
         server.saveChatMessage(historyMessage);
-    }
-
-    private void handleImageRequest(Message message) throws IOException {
-        // Forward the image request to the receiver
-        ClientHandler receiverHandler = server.getOnlineClients().get(message.getReceiverId());
-        if (receiverHandler != null) {
-            receiverHandler.sendMessage(message);
-        } else {
-            sendMessage(new Message(MessageType.SERVER_MESSAGE, "Server", message.getSenderId(), "User " + message.getReceiverId() + " is offline. Cannot send image request."));
-        }
-    }
-
-    private void handleImageAccept(Message message) throws IOException {
-        // Forward the image accept message back to the sender of the image request
-        ClientHandler senderHandler = server.getOnlineClients().get(message.getReceiverId()); // Receiver of IMAGE_ACCEPT is original sender of IMAGE_REQUEST
-        if (senderHandler != null) {
-            senderHandler.sendMessage(message);
-        } else {
-            System.out.println("Original sender " + message.getReceiverId() + " is offline. Cannot forward IMAGE_ACCEPT.");
-        }
-    }
-
-    private void handleImageReject(Message message) throws IOException {
-        // Forward the image reject message back to the sender of the image request
-        ClientHandler senderHandler = server.getOnlineClients().get(message.getReceiverId()); // Receiver of IMAGE_REJECT is original sender of IMAGE_REQUEST
-        if (senderHandler != null) {
-            senderHandler.sendMessage(message);
-        }
-    }
-
-    private void handleImageData(Message message) throws IOException {
-        // Forward the actual image data to the receiver
-        ClientHandler receiverHandler = server.getOnlineClients().get(message.getReceiverId());
-        if (receiverHandler != null) {
-            receiverHandler.sendMessage(message);
-            // 提取文件名用于聊天记录
-            String[] parts = message.getContent().split(":", 2);
-            if (parts.length >= 1) {
-                String savePathAndFileName = parts[0];
-                String fileName = savePathAndFileName.substring(Math.max(savePathAndFileName.lastIndexOf("/"), savePathAndFileName.lastIndexOf("\\")) + 1);
-                Message historyMessage = new Message(MessageType.IMAGE_MESSAGE, message.getSenderId(), message.getReceiverId(), fileName);
-                server.saveChatMessage(historyMessage);
-            }
-        } else {
-            sendMessage(new Message(MessageType.SERVER_MESSAGE, "Server", message.getSenderId(), "User " + message.getReceiverId() + " is offline. Image data not sent."));
-        }
     }
 
     private void handleGroupInvite(Message message) throws IOException {
@@ -407,17 +316,13 @@ public class ClientHandler extends Thread {
         String acceptorId = message.getSenderId();
         String groupId = message.getContent();
 
-        // The server should add the user to the group and then notify clients.
-        // The `acceptGroupInvite` method in GroupManager already handles adding the user to the group.
         if (server.getGroupManager().acceptGroupInvite(acceptorId, groupId)) {
             sendMessage(new Message(MessageType.GROUP_JOIN_SUCCESS, "Server", acceptorId, groupId));
-            // Notify all group members that a new member joined
             List<String> groupMembers = server.getGroupManager().getGroupMembers(groupId);
             if (groupMembers != null) {
                 for (String memberId : groupMembers) {
                     ClientHandler memberHandler = server.getOnlineClients().get(memberId);
                     if (memberHandler != null) {
-                        // Send a message to all members to refresh their group list
                         memberHandler.sendGroupList(memberId);
                         if (!memberId.equals(acceptorId)) {
                             memberHandler.sendMessage(new Message(MessageType.SERVER_MESSAGE, "Server", memberId, acceptorId + " has joined group " + groupId + "."));
@@ -446,9 +351,8 @@ public class ClientHandler extends Thread {
         String groupId = message.getContent();
         if (server.createGroup(groupId, creatorId)) {
             sendMessage(new Message(MessageType.CREATE_GROUP_SUCCESS, "Server", creatorId, groupId));
-            // Notify all online users about the new group (or just the creator)
             for (ClientHandler handler : server.getOnlineClients().values()) {
-                handler.sendGroupList(handler.getUserId()); // Refresh group list for all online users
+                handler.sendGroupList(handler.getUserId());
             }
         } else {
             sendMessage(new Message(MessageType.CREATE_GROUP_FAIL, "Server", creatorId, "Group ID already exists or invalid."));
@@ -461,29 +365,23 @@ public class ClientHandler extends Thread {
     }
 
     public void sendFriendList(String userId) throws IOException {
-        System.out.println("Sending friend list to user: " + userId);
         List<String> friendIds = server.getUserManager().getFriends(userId);
-        System.out.println("Friend IDs for " + userId + ": " + friendIds);
         
         StringBuilder sb = new StringBuilder();
         for (String friendId : friendIds) {
             User friendUser = server.getUserManager().getUserById(friendId);
             if (friendUser != null) {
-                // 检查好友是否在线
                 boolean isOnline = server.isUserOnline(friendId);
                 String status = isOnline ? "online" : "offline";
                 String friendInfo = friendUser.getId() + ":" + friendUser.getUsername() + ":" + status;
                 sb.append(friendInfo).append(";");
-                System.out.println("Added friend info: " + friendInfo);
             }
         }
         if (sb.length() > 0) {
-            sb.setLength(sb.length() - 1); // Remove trailing semicolon
+            sb.setLength(sb.length() - 1);
         }
         
-        String friendListContent = sb.toString();
-        System.out.println("Final friend list content: " + friendListContent);
-        sendMessage(new Message(MessageType.FRIEND_LIST, "Server", userId, friendListContent));
+        sendMessage(new Message(MessageType.FRIEND_LIST, "Server", userId, sb.toString()));
     }
 
     public void sendGroupList(String userId) throws IOException {
@@ -496,18 +394,6 @@ public class ClientHandler extends Thread {
             sb.setLength(sb.length() - 1);
         }
         sendMessage(new Message(MessageType.GET_GROUPS, "Server", userId, sb.toString()));
-    }
-
-    public void sendPendingFriendRequests(String userId) throws IOException {
-        List<String> pendingRequests = server.getUserManager().getPendingFriendRequests(userId);
-        StringBuilder sb = new StringBuilder();
-        for (String senderId : pendingRequests) {
-            sb.append(senderId).append(";");
-        }
-        if (sb.length() > 0) {
-            sb.setLength(sb.length() - 1);
-        }
-        // This is sent as part of GET_PENDING_REQUESTS now
     }
 
     public void sendPendingRequests(String userId) throws IOException {
@@ -541,7 +427,6 @@ public class ClientHandler extends Thread {
             for (String memberId : members) {
                 User memberUser = server.getUserManager().getUserById(memberId);
                 if (memberUser != null) {
-                    // 检查成员是否在线
                     boolean isOnline = server.isUserOnline(memberId);
                     String status = isOnline ? "online" : "offline";
                     sb.append(memberUser.getId()).append(":").append(memberUser.getUsername()).append(":").append(status).append(";");
@@ -554,7 +439,6 @@ public class ClientHandler extends Thread {
         sendMessage(new Message(MessageType.GET_GROUP_MEMBERS, groupId, requesterId, sb.toString()));
     }
 
-    // 通知好友状态变化
     private void notifyFriendsStatusChange(String userId) {
         List<String> friends = server.getUserManager().getFriends(userId);
         for (String friendId : friends) {
